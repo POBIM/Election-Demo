@@ -1,0 +1,165 @@
+================================================================================
+PROJECT STRUCTURE ANALYSIS - QUICK REFERENCE
+Thai Election System Demo | TypeScript Full-Stack Monorepo
+================================================================================
+
+WORKSPACE: /home/pobimgroup/Election Demo
+
+================================================================================
+LANGUAGES & FRAMEWORKS
+================================================================================
+
+Primary Language:        TypeScript (100% of application code)
+Config Languages:        JSON, TOML (Prisma), CSS (Tailwind)
+Architecture:            npm Workspaces Monorepo
+
+Backend:                 Express.js 4.18.2 + Prisma ORM + SQLite
+Frontend:                Next.js 16 + React 19 + Tailwind CSS 4
+Shared Library:          TypeScript type definitions only
+DevTools:                TypeScript 5.3.3, ESLint 8.55.0
+
+================================================================================
+DIRECTORY STRUCTURE (Top-Level)
+================================================================================
+
+backend/                 →  Express REST API server
+  ├── src/routes/       →  11 route files (auth, elections, parties, etc.)
+  ├── src/middleware/   →  3 middleware (auth, RBAC, error handling)
+  ├── prisma/           →  Schema, seed data, migrations
+  └── dist/             →  Compiled JavaScript output
+
+frontend/                →  Next.js application UI
+  ├── src/app/          →  App Router with route groups:
+  │                        - (public): /vote, /results
+  │                        - (auth): /login
+  │                        - (admin): /admin/elections
+  ├── src/components/   →  UI components (button, etc.)
+  ├── src/lib/          →  API client, auth context
+  └── src/hooks/        →  useSSE (server-sent events)
+
+shared/                  →  Type definitions library
+  ├── src/types/        →  6 type files (auth, election, vote, rbac, geo)
+  └── dist/             →  Compiled type definitions
+
+scripts/                 →  Automation scripts
+  └── smoke/            →  Integration tests (bash)
+
+.sisyphus/               →  Tool-specific cache (IDE artifacts)
+.env.local               →  ⚠️  Environment secrets (COMMITTED - security issue)
+tsconfig.base.json       →  Shared TypeScript config
+
+================================================================================
+BUILD ORDER & DEPENDENCIES
+================================================================================
+
+Correct Build Sequence:
+  1. shared (types library) ← no dependencies
+  2. backend (API server)   ← depends on @election/shared
+  3. frontend (UI app)      ← depends on @election/shared, not on backend
+
+npm Workspaces Pattern:  npm -w backend run dev
+
+================================================================================
+DETECTED FRAMEWORKS (with versions)
+================================================================================
+
+BACKEND (Express.js):
+  • express@4.18.2
+  • @prisma/client@5.7.0 (SQLite)
+  • jsonwebtoken@9.0.2 (auth)
+  • bcryptjs@2.4.3 (password hashing)
+  • zod@3.22.4 (schema validation)
+  • cors@2.8.5, dotenv@16.3.1
+
+FRONTEND (Next.js):
+  • next@16.1.6 (App Router)
+  • react@19.2.3, react-dom@19.2.3
+  • tailwindcss@4 + @tailwindcss/postcss@4
+  • @radix-ui/react-slot@1.2.4 (headless UI)
+  • lucide-react@0.563.0 (icons)
+
+SHARED (Type Library):
+  • No runtime dependencies
+  • Exports TypeScript .d.ts + compiled .js
+
+DEV (All):
+  • typescript@5.3.3
+  • eslint@8.55.0
+  • tsx@4.6.2 (for backend dev mode)
+
+================================================================================
+STRUCTURAL PATTERNS (GOOD - STANDARD)
+================================================================================
+
+✅ npm Workspaces          Standard for monorepos, hoisting strategy
+✅ Express + Prisma        Conventional Node.js REST API stack
+✅ Next.js App Router      Modern React SSR framework (v13+)
+✅ Route Groups            (admin), (auth), (public) → logical organization
+✅ Shared Type Library     Prevents duplication, single source of truth
+✅ RBAC Middleware         Role-based access control via middleware chain
+✅ TypeScript Strict Mode  noUnusedLocals, noUnusedParameters enabled
+✅ Database Migrations     Prisma version control for schema changes
+
+================================================================================
+STRUCTURAL DEVIATIONS (UNUSUAL - DOCUMENT!)
+================================================================================
+
+⚠️  Committed .env.local          SECURITY RISK: Contains JWT_SECRET, DATABASE_URL
+⚠️  Committed backend/.env         Same security risk as above
+⚠️  .sisyphus/ directory           External tool artifact (not standard Node.js)
+⚠️  Frontend no @election/shared   Types inlined instead of imported from shared
+⚠️  Single Git Commit              Initial commit only (expected for demo)
+
+================================================================================
+DATABASE (Prisma SQLite)
+================================================================================
+
+Entities:
+  • Region (5 test regions)
+  • Province (77 Thai provinces)
+  • District (400 electoral districts)
+  • User (staff accounts with 4 roles)
+  • Election (voting events)
+  • Party (8 demo political parties)
+  • Candidate (2,000 demo candidates)
+  • Vote, VoteBatch, ReferendumQuestion
+
+Schema:        backend/prisma/schema.prisma
+Seeding:       backend/prisma/seed.ts
+Migrations:    backend/prisma/migrations/
+Database File: backend/prisma/dev.db (SQLite)
+
+================================================================================
+READY FOR AGENTS.MD HIERARCHY
+================================================================================
+
+Recommended Placement:
+
+  /home/pobimgroup/Election Demo/
+  ├── AGENTS.md                    ← ROOT monorepo overview
+  │
+  ├── backend/
+  │   └── AGENTS.md                ← Express routes, middleware, Prisma models
+  │
+  ├── frontend/
+  │   └── AGENTS.md                ← Next.js app router, route groups, components
+  │
+  ├── shared/
+  │   └── AGENTS.md                ← Type definitions, exports, imports
+  │
+  └── scripts/
+      └── AGENTS.md                ← Build scripts, seed data, automation
+
+================================================================================
+SUMMARY
+================================================================================
+
+Status:         ✅ Well-structured, modern, standards-compliant
+Architecture:   Full-stack TypeScript monorepo (npm workspaces)
+Languages:      TypeScript 100% (config: JSON, Prisma)
+Backend:        Express.js + Prisma + SQLite
+Frontend:       Next.js 16 + React 19 + Tailwind CSS
+Concerns:       .env file security (minor), no shared types in frontend (mild)
+Ready for:      5-level AGENTS.md hierarchy for agent-based navigation
+
+================================================================================

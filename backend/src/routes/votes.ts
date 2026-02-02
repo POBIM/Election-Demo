@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { createHash, randomBytes } from 'crypto';
 import prisma from '../db/index.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { notifyVoteUpdate } from './stream.js';
 
 const router = Router();
 
@@ -88,6 +89,9 @@ router.post('/cast', authMiddleware, async (req, res) => {
       }
     }
   });
+
+  // Notify SSE clients about the vote update
+  notifyVoteUpdate(electionId);
 
   res.status(201).json({
     success: true,

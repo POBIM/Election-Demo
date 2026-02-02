@@ -1,0 +1,111 @@
+FRONTEND-BACKEND COMMUNICATION - QUICK REFERENCE
+================================================
+
+1. DOES apiRequest() AUTO-UNWRAP { success, data }?
+   ❌ NO - Returns raw response as-is
+   
+   Backend returns: { success: true, data: [...] }
+   apiRequest() returns: { success: true, data: [...] }
+   
+   Vote page correctly types it as:
+     const response = await apiRequest<{ success: boolean; data: T }>("/endpoint");
+   
+   Results page incorrectly types it as:
+     const data = await apiRequest<T>("/endpoint");  // ❌ Works by accident
+     
+   Recommendation: Add auto-unwrap to apiRequest()
+     return (json.data ?? json) as T;
+
+---
+
+2. USER OBJECT PROPERTIES
+   ✅ Available properties:
+   - id: string (User ID)
+   - email?: string (For officials)
+   - citizenId?: string (For voters)
+   - name: string (Full name)
+   - role: UserRole (voter | super_admin | regional_admin | province_admin | district_official)
+   - scope?: OfficialScope ({ regionId?, provinceId?, districtId? })
+   - eligibleDistrictId?: string (For voters only)
+
+---
+
+3. API RESPONSE MISMATCHES FOUND
+   ❌ Results page (line 282):
+      - Expects: ElectionData
+      - Actually receives: { success: boolean, data: ElectionData }
+      - Status: Type mismatch but works
+   
+   ✅ Vote page (lines 139-140):
+      - Expects: { success: boolean, data: Election[] }
+      - Correctly accesses .data
+      - Status: Correct implementation
+
+---
+
+4. SSE HOOK ISSUES - CRITICAL 🔴
+   
+   TWO CRITICAL MISMATCHES:
+   
+   a) Endpoint path mismatch:
+      Frontend calls: /stream/results/{electionId}
+      Backend exposes: /stream/elections/{electionId}/results
+      Result: 404 error
+   
+   b) Event name mismatch:
+      Frontend listens for: 'result_update'
+      Backend sends: 'snapshot' (initial) + unnamed (updates)
+      Result: No events received
+   
+   Recommendation: 
+   Option A - Fix backend:
+     - Change route to /results/:electionId
+     - Change event to 'result_update'
+   Option B - Fix frontend:
+     - Change endpoint to /stream/elections/{electionId}/results
+     - Listen for 'snapshot' event
+
+---
+
+5. TOKEN STORAGE INCONSISTENCY
+   ❌ Three different names:
+   - localStorage key: "auth_token"
+   - Frontend cookie: "auth_token"
+   - Backend cookie: "token"
+   
+   Current flow:
+   - apiRequest() reads from localStorage
+   - middleware.ts reads from auth_token cookie
+   - backend auth.ts reads from token cookie
+   
+   Recommendation:
+   - Use backend-set HttpOnly cookies only
+   - Remove localStorage management
+   - Cookies automatically sent with credentials: "include"
+
+---
+
+KEY FINDINGS SUMMARY
+===================
+
+🔴 CRITICAL (Blocks Functionality):
+  1. SSE endpoint doesn't exist (404)
+  2. SSE event name mismatch (never receives events)
+
+🟡 HIGH (Type Safety Issues):
+  3. Results page has API response type mismatch
+  4. Token stored in 3 different places
+
+🟢 MEDIUM (Code Quality):
+  5. API errors not properly unwrapped
+  6. JWT not verified in frontend middleware
+
+RECOMMENDED ACTION ORDER
+========================
+1. Fix SSE endpoint + event names (blocks live results feature)
+2. Add auto-unwrap to apiRequest()
+3. Standardize token storage (use backend-managed cookies)
+4. Add error unwrapping
+5. Add JWT verification
+
+For detailed analysis, see: FRONTEND_BACKEND_COMMUNICATION_ANALYSIS.md

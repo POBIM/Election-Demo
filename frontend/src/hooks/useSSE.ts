@@ -15,6 +15,7 @@ export function useSSE<T>(endpoint: string, options: SSEOptions = {}) {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     let isMounted = true;
 
@@ -51,6 +52,33 @@ export function useSSE<T>(endpoint: string, options: SSEOptions = {}) {
           }
         }
       });
+
+      eventSource.addEventListener('snapshot', (event) => {
+        if (isMounted) {
+          try {
+            const parsedData = JSON.parse(event.data);
+            setData(parsedData);
+            options.onMessage?.(parsedData);
+          } catch (err) {
+            console.error('Failed to parse SSE snapshot data', err);
+          }
+        }
+      });
+
+      eventSource.onmessage = (event) => {
+        if (isMounted) {
+          try {
+            const parsedData = JSON.parse(event.data);
+            // Handle vote_update events sent without explicit event type
+            if (parsedData && (parsedData.event === 'vote_update' || parsedData.timestamp)) {
+              setData(parsedData);
+              options.onMessage?.(parsedData);
+            }
+          } catch (err) {
+            console.error('Failed to parse SSE message data', err);
+          }
+        }
+      };
 
       eventSource.onerror = (err) => {
         console.error('SSE Error:', err);

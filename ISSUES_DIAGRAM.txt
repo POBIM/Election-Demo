@@ -1,0 +1,229 @@
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║           FRONTEND-BACKEND COMMUNICATION - ISSUES DIAGRAM                     ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+ISSUE #1: API Response Unwrapping
+═══════════════════════════════════════════════════════════════════════════════
+
+Backend Response:
+┌──────────────────────────────────────┐
+│ {                                    │
+│   "success": true,                   │
+│   "data": [                          │  ← This is what you want
+│     { "id": 1, "name": "..." }       │
+│   ]                                  │
+│ }                                    │
+└──────────────────────────────────────┘
+
+Frontend Code Options:
+
+❌ INCORRECT (Results page):
+    apiRequest<Election[]>("/elections")  
+    ↓ TypeScript thinks this is Election[]
+    ↓ But actually receives { success, data: Election[] }
+    ✗ Type mismatch, works by accident
+
+✅ CORRECT (Vote page):
+    apiRequest<{ success: boolean; data: Election[] }>("/elections")
+    ↓ Types entire response
+    ↓ Must access .data property
+    ✓ Type safe but verbose
+
+RECOMMENDATION:
+    apiRequest<Election[]>("/elections")  ← Pass inner type
+    ↓ Auto-unwrap in the function
+    ↓ return (json.data ?? json) as T;
+    ✓ Clean AND type safe
+
+
+ISSUE #2: SSE Stream Communication
+═══════════════════════════════════════════════════════════════════════════════
+
+Frontend Hook (useSSE.ts):
+┌─────────────────────────────────────────────────┐
+│ useSSE(`/stream/results/${electionId}`)          │  ← Wrong endpoint!
+│                                                 │
+│ addEventListener('result_update', (event) => {  │  ← Wrong event name!
+│   const data = JSON.parse(event.data);          │
+│   setData(data);                                │
+│ });                                             │
+└─────────────────────────────────────────────────┘
+                      ↓
+            ❌ 404 ERROR (endpoint not found)
+            ❌ No 'result_update' events sent
+
+Backend Stream (stream.ts):
+┌──────────────────────────────────────────────────┐
+│ router.get('/elections/:electionId/results') {   │  ← Different path!
+│   res.write(`event: snapshot\n...`);             │  ← Wrong event!
+│   res.write(`data: {...}\n\n`);                  │  ← Unnamed events!
+│ }                                                │
+└──────────────────────────────────────────────────┘
+
+DIAGRAM:
+Frontend                Backend              Outcome
+─────────────────────────────────────────────────────
+/stream/results/1   →   /stream/elections/1/results
+                        ✗ 404 Not Found
+
+result_update      ←    snapshot
+                        ✗ Not matched
+
+                   ←    unnamed event
+                        ✗ No event type
+
+
+ISSUE #3: Token Storage Chaos
+═══════════════════════════════════════════════════════════════════════════════
+
+Frontend Auth Context (auth-context.tsx):
+┌────────────────────────────────────────────────┐
+│ localStorage.setItem("auth_token", token);     │
+│ document.cookie = `auth_token=${token}; ...`; │
+└────────────────────────────────────────────────┘
+
+Frontend API Request (api.ts):
+┌────────────────────────────────────────────────┐
+│ const token = localStorage.getItem("auth_token")
+│ headers: { Authorization: `Bearer ${token}` }
+└────────────────────────────────────────────────┘
+
+Frontend Middleware (middleware.ts):
+┌────────────────────────────────────────────────┐
+│ const token = request.cookies.get('auth_token')
+└────────────────────────────────────────────────┘
+
+Backend Auth (backend/src/middleware/auth.ts):
+┌────────────────────────────────────────────────┐
+│ const token = req.cookies.token                │
+│ // or Authorization header               
+└────────────────────────────────────────────────┘
+
+Token Name Tracking:
+─────────────────────────────────────────
+Location              Storage Name
+─────────────────────────────────────────
+Frontend localStorage   "auth_token"
+Frontend cookie         "auth_token"
+Backend expects         "token"  ← ⚠️ DIFFERENT!
+─────────────────────────────────────────
+
+Problem: Three different names for the same token!
+
+
+ISSUE #4: Type Safety Cascade
+═══════════════════════════════════════════════════════════════════════════════
+
+Vote Page: ✅ Type Safe
+```
+const response = await apiRequest<{ success: boolean; data: T }>("/elections");
+const elections = response.data;  // ✓ Type-checked
+```
+
+Results Page: ❌ Broken Types
+```
+const data = await apiRequest<T>("/results?...");
+// TypeScript: data is T
+// Runtime: data is { success: true, data: T }
+// Code: treats it as T
+// Result: Works by accident, fragile
+```
+
+SSE Connection: ❌ Multiple Issues
+```
+// Wrong endpoint (404)
+const { data: sseData } = useSSE(`/stream/results/${id}`);
+
+// Wrong event name (never triggered)
+eventSource.addEventListener('result_update', ...);
+
+// Type mismatch (uses inner type expecting envelope)
+apiRequest<ElectionData>(`/results?...`);
+```
+
+
+CRITICAL FLOW DIAGRAM
+═══════════════════════════════════════════════════════════════════════════════
+
+Results Page Flow (Current - BROKEN):
+─────────────────────────────────────────────────────────
+
+User visits /results
+    ↓
+apiRequest("/results?electionId=1")
+    ↓ Receives: { success: true, data: {...} }
+    ↓ TypeScript expects: ElectionData
+    ↓ Runtime: Works by accident
+    ↓
+setInitialData(data)  ← Contains wrapped response, not ideal
+    ↓
+useSSE("/stream/results/1")  ← Wrong endpoint
+    ↓
+❌ 404 error - endpoint doesn't exist
+    ↓
+eventSource.addEventListener('result_update')  ← Wrong event
+    ↓
+❌ Never receives events
+    ↓
+displayData = sseData || initialData  ← Falls back to initial
+    ↓
+Results show static data, no live updates ❌
+
+
+Results Page Flow (Recommended - FIXED):
+─────────────────────────────────────────────────────────
+
+User visits /results
+    ↓
+elections = apiRequest<Election[]>("/results?electionId=1")
+    ↓ Auto-unwraps in apiRequest
+    ↓ setInitialData(elections)
+    ↓
+useSSE("/stream/elections/1/results")  ← Correct endpoint
+    ↓
+✅ Connection established
+    ↓
+eventSource.addEventListener('result_update')  ← Correct event
+    ↓
+✅ Receives snapshot + updates
+    ↓
+displayData = sseData || initialData  ← Uses live updates
+    ↓
+Results show live-updating data ✅
+
+
+SEVERITY BREAKDOWN
+═══════════════════════════════════════════════════════════════════════════════
+
+🔴 CRITICAL (Blocks Features):
+   ├─ SSE endpoint mismatch      → Live results feature broken
+   └─ SSE event name mismatch    → Live updates never received
+
+🟡 HIGH (Type/Security Issues):
+   ├─ API response type mismatch → Type safety lost
+   ├─ Token storage split        → Auth may fail
+   └─ No JWT verification        → Tokens can be forged
+
+🟢 MEDIUM (Code Quality):
+   ├─ Error responses unwrapped  → Error messages may be unclear
+   └─ JWT not verified in FE     → Less secure (backend validates)
+
+
+REMEDIATION PRIORITY
+═══════════════════════════════════════════════════════════════════════════════
+
+IMMEDIATE (Today):
+  1. Fix SSE endpoint path
+  2. Fix SSE event name
+  → This unblocks the live results feature
+
+SHORT TERM (This week):
+  3. Add auto-unwrap to apiRequest()
+  4. Standardize token storage
+  → This fixes type safety and auth consistency
+
+MEDIUM TERM (This month):
+  5. Add error response unwrapping
+  6. Add JWT signature verification
+  → This improves code quality and security
+

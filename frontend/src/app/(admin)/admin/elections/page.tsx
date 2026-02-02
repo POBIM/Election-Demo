@@ -9,8 +9,9 @@ import Link from "next/link";
 
 interface Election {
   id: string;
-  title: string;
-  status: string;
+  name?: string;
+  nameTh?: string;
+  status: 'DRAFT' | 'OPEN' | 'CLOSED' | 'ARCHIVED';
   createdAt?: string;
 }
 
@@ -48,11 +49,13 @@ export default function ElectionsPage() {
           <p className="text-slate-500">รายการเลือกตั้งทั้งหมดในระบบ</p>
         </div>
         {user?.role === 'super_admin' && (
-           <Button className="bg-[#1e293b] text-white hover:bg-[#0f172a]">
-              <Plus className="w-4 h-4 mr-2" />
-              สร้างการเลือกตั้ง
-           </Button>
-        )}
+           <Link href="/admin/elections/new">
+             <Button className="bg-[#1e293b] text-white hover:bg-[#0f172a]">
+                <Plus className="w-4 h-4 mr-2" />
+                สร้างการเลือกตั้ง
+             </Button>
+           </Link>
+         )}
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
@@ -90,20 +93,20 @@ export default function ElectionsPage() {
                  elections.map(election => (
                    <tr key={election.id} className="hover:bg-slate-50 transition-colors">
                      <td className="px-6 py-4 font-medium text-slate-900">
-                        <div className="flex items-center gap-3">
-                           <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500">
-                             <Vote className="w-4 h-4" />
-                           </div>
-                           {election.title}
-                        </div>
+                         <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500">
+                              <Vote className="w-4 h-4" />
+                            </div>
+                            {election.nameTh || election.name || 'ไม่มีชื่อ'}
+                         </div>
                      </td>
                      <td className="px-6 py-4">
-                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize
-                         ${election.status === 'open' ? 'bg-green-100 text-green-800' : 
-                           election.status === 'closed' ? 'bg-red-100 text-red-800' : 
-                           'bg-slate-100 text-slate-800'}`}>
-                         {election.status}
-                       </span>
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize
+                          ${election.status === 'OPEN' ? 'bg-green-100 text-green-800' :
+                            election.status === 'CLOSED' ? 'bg-red-100 text-red-800' :
+                            'bg-slate-100 text-slate-800'}`}>
+                          {election.status}
+                        </span>
                      </td>
                      <td className="px-6 py-4 text-slate-500">
                        {election.createdAt ? new Date(election.createdAt).toLocaleDateString('th-TH') : '-'}

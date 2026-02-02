@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { Suspense, useEffect, useState, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useSSE } from '@/hooks/useSSE';
 import { apiRequest } from '@/lib/api';
 import { Loader2, RefreshCw, Wifi, WifiOff, Check, AlertCircle } from 'lucide-react';
@@ -20,41 +21,77 @@ function formatPercent(num: number): string {
 }
 
 interface PartyListResult {
-  partyId: number;
+  partyId: string;
   partyName: string;
+  partyNameTh?: string;
   partyColor: string;
   voteCount: number;
   percentage: number;
 }
 
-interface CandidateResult {
-  candidateId: number;
-  candidateName: string;
-  partyName: string;
-  voteCount: number;
-}
-
-interface ConstituencyResult {
-  districtId: number;
-  districtName: string;
-  results: CandidateResult[];
-}
-
 interface ReferendumResult {
-  questionId: number;
+  questionId: string;
   questionText: string;
   approveCount: number;
   disapproveCount: number;
   abstainCount: number;
+  approvePercentage?: number;
+  disapprovePercentage?: number;
+  result?: string;
 }
 
-interface ElectionData {
+// REST API response (from /results/:electionId)
+interface RestResultsData {
+  electionId: string;
+  electionName: string;
+  status: string;
+  lastUpdated: string;
+  totalEligibleVoters: number;
+  totalVotesCast: number;
+  turnoutPercentage: number;
   partyListResults: PartyListResult[];
-  constituencyResults: ConstituencyResult[];
+  referendumResults: ReferendumResult[];
+}
+
+// SSE snapshot data structure (from stream)
+interface SSESnapshotData {
+  timestamp: string;
+  totalVotes: number;
+  partyResults: Array<{
+    partyId: string;
+    partyName: string;
+    partyColor: string;
+    voteCount: number;
+  }>;
+  event?: string;
+}
+
+// Unified display data
+interface DisplayData {
+  partyListResults: PartyListResult[];
   referendumResults: ReferendumResult[];
   totalVotes: number;
-  voterTurnout: number;
+  turnoutPercentage: number;
   lastUpdated: string;
+}
+
+function normalizeSseData(sseData: SSESnapshotData | null): DisplayData | null {
+  if (!sseData) return null;
+
+  return {
+    partyListResults: (sseData.partyResults || []).map((p) => ({
+      partyId: p.partyId,
+      partyName: p.partyName,
+      partyNameTh: p.partyName, // SSE uses partyName for Thai
+      partyColor: p.partyColor,
+      voteCount: p.voteCount,
+      percentage: sseData.totalVotes > 0 ? (p.voteCount / sseData.totalVotes) * 100 : 0,
+    })),
+    referendumResults: [], // SSE doesn't include referendum updates
+    totalVotes: sseData.totalVotes,
+    turnoutPercentage: 0, // Not in SSE snapshot
+    lastUpdated: sseData.timestamp,
+  };
 }
 
 const StatusIndicator = ({ status, lastUpdated }: { status: string; lastUpdated: string }) => {
@@ -95,7 +132,7 @@ const PartyListTab = ({ data }: { data: PartyListResult[] }) => {
                   {index + 1}
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-800 text-lg leading-tight">{party.partyName}</h3>
+                  <h3 className="font-bold text-slate-800 text-lg leading-tight">{party.partyNameTh || party.partyName}</h3>
                   <p className="text-sm text-slate-500">พรรคการเมือง</p>
                 </div>
               </div>
@@ -130,7 +167,20 @@ const PartyListTab = ({ data }: { data: PartyListResult[] }) => {
   );
 };
 
-const ConstituencyTab = ({ data }: { data: ConstituencyResult[] }) => {
+const ConstituencyTab = ({
+  data,
+}: {
+  data: Array<{
+    districtId: number;
+    districtName: string;
+    results: Array<{
+      candidateId: number;
+      candidateName: string;
+      partyName: string;
+      voteCount: number;
+    }>;
+  }>;
+}) => {
   const [selectedDistrictId, setSelectedDistrictId] = useState<number>(data[0]?.districtId || 0);
 
   const selectedDistrict = useMemo(() => 
@@ -271,26 +321,39 @@ const ReferendumTab = ({ data }: { data: ReferendumResult[] }) => {
   );
 };
 
-export default function ResultsPage({ searchParams }: { searchParams: { electionId?: string } }) {
-  const electionId = searchParams.electionId || '1'; 
-  const { data: sseData, status } = useSSE<ElectionData>(`/stream/results/${electionId}`);
-  const [initialData, setInitialData] = useState<ElectionData | null>(null);
-  const [activeTab, setActiveTab] = useState<'party' | 'constituency' | 'referendum'>('party');
+function ResultsPageContent() {
+  const searchParams = useSearchParams();
+  const electionId = searchParams.get('electionId') || 'demo-election-2027';
+
+  const { data: sseData, status } = useSSE<SSESnapshotData>(`/stream/elections/${electionId}/results`);
+  const [initialData, setInitialData] = useState<DisplayData | null>(null);
+  const [activeTab, setActiveTab] = useState<'party' | 'referendum'>('party');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiRequest<ElectionData>(`/results?electionId=${electionId}`)
-      .then(data => {
-        setInitialData(data);
+    apiRequest<{ success: boolean; data: RestResultsData }>(`/results/${electionId}`)
+      .then((response) => {
+        if (response.success && response.data) {
+          const normalized: DisplayData = {
+            partyListResults: response.data.partyListResults,
+            referendumResults: response.data.referendumResults,
+            totalVotes: response.data.totalVotesCast,
+            turnoutPercentage: response.data.turnoutPercentage,
+            lastUpdated: response.data.lastUpdated,
+          };
+          setInitialData(normalized);
+        }
         setLoading(false);
       })
-      .catch(err => {
+      .catch((err) => {
         console.error('Failed to fetch initial data', err);
         setLoading(false);
       });
   }, [electionId]);
 
-  const displayData = sseData || initialData;
+  const sseNormalized = normalizeSseData(sseData);
+  const displayData: DisplayData | null = sseNormalized || initialData;
+  const referendumData = initialData?.referendumResults || displayData?.referendumResults || [];
 
   if (loading) {
     return (
@@ -340,15 +403,14 @@ export default function ResultsPage({ searchParams }: { searchParams: { election
       <div className="sticky top-[88px] md:top-[84px] z-40 bg-white/80 backdrop-blur-md border-b border-slate-200">
         <div className="container mx-auto px-4">
           <div className="flex gap-6 overflow-x-auto pb-px hide-scrollbar">
-            {[
+            {([
               { id: 'party', label: 'บัญชีรายชื่อ' },
-              { id: 'constituency', label: 'แบ่งเขต' },
-              { id: 'referendum', label: 'ประชามติ' }
-            ].map(tab => (
+              { id: 'referendum', label: 'ประชามติ' },
+            ] as const).map((tab) => (
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setActiveTab(tab.id as any)}
+                onClick={() => setActiveTab(tab.id)}
                 className={cn(
                   "py-4 text-sm md:text-base font-bold border-b-2 transition-all whitespace-nowrap px-2",
                   activeTab === tab.id 
@@ -363,13 +425,12 @@ export default function ResultsPage({ searchParams }: { searchParams: { election
         </div>
       </div>
 
-      <div className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto">
-          {activeTab === 'party' && <PartyListTab data={displayData.partyListResults} />}
-          {activeTab === 'constituency' && <ConstituencyTab data={displayData.constituencyResults} />}
-          {activeTab === 'referendum' && <ReferendumTab data={displayData.referendumResults} />}
+        <div className="container mx-auto px-4 py-8">
+          <div className="max-w-4xl mx-auto">
+            {activeTab === 'party' && <PartyListTab data={displayData.partyListResults} />}
+            {activeTab === 'referendum' && <ReferendumTab data={referendumData} />}
+          </div>
         </div>
-      </div>
 
       <footer className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-50">
         <div className="container mx-auto px-4 py-3">
@@ -383,12 +444,29 @@ export default function ResultsPage({ searchParams }: { searchParams: { election
             <div className="flex items-center gap-2">
               <div className="text-right">
                 <span className="block text-xs text-slate-500 font-medium uppercase tracking-wider">Voter Turnout</span>
-                <span className="block font-black text-blue-600 text-xl leading-none">{formatPercent(displayData.voterTurnout * 100)}</span>
+                <span className="block font-black text-blue-600 text-xl leading-none">{formatPercent(displayData.turnoutPercentage)}</span>
               </div>
             </div>
           </div>
         </div>
       </footer>
     </main>
+  );
+}
+
+export default function ResultsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="animate-spin w-8 h-8 text-blue-600" />
+            <p className="font-medium animate-pulse">กำลังโหลดข้อมูลการเลือกตั้ง...</p>
+          </div>
+        </div>
+      }
+    >
+      <ResultsPageContent />
+    </Suspense>
   );
 }
