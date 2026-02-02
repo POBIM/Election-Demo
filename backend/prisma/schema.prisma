@@ -1,0 +1,256 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Region {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  nameTh    String
+  provinces Province[]
+  officials User[]
+
+  @@map("regions")
+}
+
+model Province {
+  id            String     @id @default(cuid())
+  code          Int        @unique
+  name          String
+  nameTh        String
+  regionId      String
+  region        Region     @relation(fields: [regionId], references: [id])
+  districts     District[]
+  officials     User[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([regionId])
+  @@map("provinces")
+}
+
+model District {
+  id              String      @id @default(cuid())
+  provinceId      String
+  province        Province    @relation(fields: [provinceId], references: [id])
+  zoneNumber      Int
+  name            String
+  nameTh          String
+  zoneDescription String
+  amphoeList      String
+  voterCount      Int         @default(0)
+  candidates      Candidate[]
+  voteBatches     VoteBatch[]
+  officials       User[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@unique([provinceId, zoneNumber])
+  @@index([provinceId])
+  @@map("districts")
+}
+
+model User {
+  id                String      @id @default(cuid())
+  email             String?     @unique
+  passwordHash      String?
+  citizenId         String?     @unique
+  name              String
+  role              String      @default("voter")
+  scopeRegionId     String?
+  scopeProvinceId   String?
+  scopeDistrictId   String?
+  scopeRegion       Region?     @relation(fields: [scopeRegionId], references: [id])
+  scopeProvince     Province?   @relation(fields: [scopeProvinceId], references: [id])
+  scopeDistrict     District?   @relation(fields: [scopeDistrictId], references: [id])
+  submittedBatches  VoteBatch[] @relation("SubmittedBy")
+  approvedBatches   VoteBatch[] @relation("ApprovedBy")
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@index([role])
+  @@index([scopeRegionId])
+  @@index([scopeProvinceId])
+  @@index([scopeDistrictId])
+  @@map("users")
+}
+
+model Election {
+  id                  String               @id @default(cuid())
+  name                String
+  nameTh              String
+  description         String?
+  startDate           DateTime
+  endDate             DateTime
+  status              String               @default("DRAFT")
+  hasPartyList        Boolean              @default(true)
+  hasConstituency     Boolean              @default(true)
+  hasReferendum       Boolean              @default(false)
+  parties             Party[]
+  candidates          Candidate[]
+  referendumQuestions ReferendumQuestion[]
+  votes               Vote[]
+  voteBatches         VoteBatch[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@index([status])
+  @@map("elections")
+}
+
+model Party {
+  id           String      @id @default(cuid())
+  electionId   String
+  election     Election    @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  name         String
+  nameTh       String
+  abbreviation String
+  color        String
+  logoUrl      String?
+  partyNumber  Int
+  description  String?
+  candidates   Candidate[]
+  votes        Vote[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@unique([electionId, partyNumber])
+  @@index([electionId])
+  @@map("parties")
+}
+
+model Candidate {
+  id              String   @id @default(cuid())
+  electionId      String
+  election        Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  districtId      String
+  district        District @relation(fields: [districtId], references: [id])
+  partyId         String?
+  party           Party?   @relation(fields: [partyId], references: [id])
+  candidateNumber Int
+  titleTh         String
+  firstNameTh     String
+  lastNameTh      String
+  titleEn         String?
+  firstNameEn     String?
+  lastNameEn      String?
+  photoUrl        String?
+  votes           Vote[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([electionId, districtId, candidateNumber])
+  @@index([electionId])
+  @@index([districtId])
+  @@index([partyId])
+  @@map("candidates")
+}
+
+model ReferendumQuestion {
+  id            String   @id @default(cuid())
+  electionId    String
+  election      Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  questionNumber Int
+  questionTh    String
+  questionEn    String?
+  descriptionTh String?
+  descriptionEn String?
+  votes         Vote[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([electionId, questionNumber])
+  @@index([electionId])
+  @@map("referendum_questions")
+}
+
+model Vote {
+  id                   String              @id @default(cuid())
+  electionId           String
+  election             Election            @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  ballotType           String
+  voterHash            String
+  partyId              String?
+  party                Party?              @relation(fields: [partyId], references: [id])
+  candidateId          String?
+  candidate            Candidate?          @relation(fields: [candidateId], references: [id])
+  referendumQuestionId String?
+  referendumQuestion   ReferendumQuestion? @relation(fields: [referendumQuestionId], references: [id])
+  referendumAnswer     String?
+  createdAt            DateTime            @default(now())
+
+  @@unique([electionId, ballotType, voterHash])
+  @@unique([electionId, ballotType, voterHash, referendumQuestionId])
+  @@index([electionId])
+  @@index([ballotType])
+  @@index([partyId])
+  @@index([candidateId])
+  @@index([referendumQuestionId])
+  @@map("votes")
+}
+
+model VoteBatch {
+  id               String              @id @default(cuid())
+  electionId       String
+  election         Election            @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  districtId       String
+  district         District            @relation(fields: [districtId], references: [id])
+  submittedById    String
+  submittedBy      User                @relation("SubmittedBy", fields: [submittedById], references: [id])
+  approvedById     String?
+  approvedBy       User?               @relation("ApprovedBy", fields: [approvedById], references: [id])
+  status           String              @default("PENDING")
+  partyVotes       VoteBatchParty[]
+  constituencyVotes VoteBatchCandidate[]
+  referendumVotes  VoteBatchReferendum[]
+  totalVotes       Int                 @default(0)
+  notes            String?
+  rejectionReason  String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([electionId])
+  @@index([districtId])
+  @@index([status])
+  @@index([submittedById])
+  @@map("vote_batches")
+}
+
+model VoteBatchParty {
+  id          String    @id @default(cuid())
+  batchId     String
+  batch       VoteBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  partyId     String
+  voteCount   Int
+
+  @@unique([batchId, partyId])
+  @@map("vote_batch_parties")
+}
+
+model VoteBatchCandidate {
+  id          String    @id @default(cuid())
+  batchId     String
+  batch       VoteBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  candidateId String
+  voteCount   Int
+
+  @@unique([batchId, candidateId])
+  @@map("vote_batch_candidates")
+}
+
+model VoteBatchReferendum {
+  id               String    @id @default(cuid())
+  batchId          String
+  batch            VoteBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  questionId       String
+  approveCount     Int       @default(0)
+  disapproveCount  Int       @default(0)
+  abstainCount     Int       @default(0)
+
+  @@unique([batchId, questionId])
+  @@map("vote_batch_referendums")
+}

@@ -1,0 +1,39 @@
+{
+  "name": "thai-election-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Thai Election System - Multi-election voting platform with RBAC",
+  "workspaces": [
+    "frontend",
+    "backend",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:frontend": "npm -w frontend run dev",
+    "dev:backend": "npm -w backend run dev",
+    "build": "npm run build:shared && npm run build:backend && npm run build:frontend",
+    "build:shared": "npm -w shared run build",
+    "build:frontend": "npm -w frontend run build",
+    "build:backend": "npm -w backend run build",
+    "lint": "npm run lint:shared && npm run lint:backend && npm run lint:frontend",
+    "lint:shared": "npm -w shared run lint",
+    "lint:frontend": "npm -w frontend run lint",
+    "lint:backend": "npm -w backend run lint",
+    "typecheck": "npm run typecheck:shared && npm run typecheck:backend && npm run typecheck:frontend",
+    "typecheck:shared": "npm -w shared run typecheck",
+    "typecheck:frontend": "npm -w frontend run typecheck",
+    "typecheck:backend": "npm -w backend run typecheck",
+    "db:migrate": "npm -w backend run db:migrate",
+    "db:seed": "npm -w backend run db:seed",
+    "db:reset": "npm -w backend run db:reset",
+    "smoke": "bash scripts/smoke/run-all.sh"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
