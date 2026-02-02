@@ -38,35 +38,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    checkAuth();
-  }, []);
-
-  const checkAuth = async () => {
-    const token = localStorage.getItem("auth_token");
-    
-    if (!token) {
-      setUser(null);
-      setIsLoading(false);
-      return;
-    }
-    
-    try {
-      const userData = await apiRequest<AuthUser>("/auth/me", {
-        headers: { Authorization: `Bearer ${token}` } as HeadersInit
-      });
+    const doCheckAuth = async () => {
+      const token = localStorage.getItem("auth_token");
       
-      if (userData && userData.id) {
-        setUser(userData);
-      } else {
+      if (!token) {
         setUser(null);
+        setIsLoading(false);
+        return;
       }
-    } catch {
-      setUser(null);
-      localStorage.removeItem("auth_token");
-    } finally {
-      setIsLoading(false);
-    }
-  };
+      
+      try {
+        const response = await apiRequest<{ success: boolean; data: AuthUser }>("/auth/me", {
+          headers: { Authorization: `Bearer ${token}` } as HeadersInit
+        });
+        
+        if (response?.data?.id) {
+          setUser(response.data);
+        } else {
+          setUser(null);
+          localStorage.removeItem("auth_token");
+        }
+      } catch {
+        setUser(null);
+        localStorage.removeItem("auth_token");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    doCheckAuth();
+  }, []);
 
   const voterLogin = async (citizenId: string) => {
     setIsLoading(true);

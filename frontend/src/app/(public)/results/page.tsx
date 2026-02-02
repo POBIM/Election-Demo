@@ -1,378 +1,154 @@
 'use client';
 
-import { Suspense, useEffect, useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useSSE } from '@/hooks/useSSE';
 import { apiRequest } from '@/lib/api';
-import { Loader2, RefreshCw, Wifi, WifiOff, Check, AlertCircle } from 'lucide-react';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { ThailandMap, ProvinceData } from './components/ThailandMap';
+import { RegionFilter, formatNumber, formatPercent } from '@/lib/provinceMapping';
+import { Loader2, Users, Vote, PieChart, Map as MapIcon } from 'lucide-react';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell
+} from 'recharts';
 
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-
-function formatNumber(num: number): string {
-  return new Intl.NumberFormat('th-TH').format(num);
-}
-
-function formatPercent(num: number): string {
-  return new Intl.NumberFormat('th-TH', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(num / 100);
-}
-
-interface PartyListResult {
-  partyId: string;
-  partyName: string;
-  partyNameTh?: string;
-  partyColor: string;
-  voteCount: number;
-  percentage: number;
-}
-
-interface ReferendumResult {
-  questionId: string;
-  questionText: string;
-  approveCount: number;
-  disapproveCount: number;
-  abstainCount: number;
-  approvePercentage?: number;
-  disapprovePercentage?: number;
-  result?: string;
-}
-
-// REST API response (from /results/:electionId)
-interface RestResultsData {
-  electionId: string;
-  electionName: string;
-  status: string;
-  lastUpdated: string;
-  totalEligibleVoters: number;
-  totalVotesCast: number;
-  turnoutPercentage: number;
-  partyListResults: PartyListResult[];
-  referendumResults: ReferendumResult[];
-}
-
-// SSE snapshot data structure (from stream)
-interface SSESnapshotData {
-  timestamp: string;
-  totalVotes: number;
-  partyResults: Array<{
-    partyId: string;
-    partyName: string;
-    partyColor: string;
-    voteCount: number;
-  }>;
-  event?: string;
-}
-
-// Unified display data
-interface DisplayData {
-  partyListResults: PartyListResult[];
-  referendumResults: ReferendumResult[];
-  totalVotes: number;
-  turnoutPercentage: number;
-  lastUpdated: string;
-}
-
-function normalizeSseData(sseData: SSESnapshotData | null): DisplayData | null {
-  if (!sseData) return null;
-
-  return {
-    partyListResults: (sseData.partyResults || []).map((p) => ({
-      partyId: p.partyId,
-      partyName: p.partyName,
-      partyNameTh: p.partyName, // SSE uses partyName for Thai
-      partyColor: p.partyColor,
-      voteCount: p.voteCount,
-      percentage: sseData.totalVotes > 0 ? (p.voteCount / sseData.totalVotes) * 100 : 0,
-    })),
-    referendumResults: [], // SSE doesn't include referendum updates
-    totalVotes: sseData.totalVotes,
-    turnoutPercentage: 0, // Not in SSE snapshot
-    lastUpdated: sseData.timestamp,
+interface APIResponse {
+  success: boolean;
+  data: {
+    electionId: string;
+    electionName: string;
+    lastUpdated: string;
+    provinces: ProvinceData[];
   };
 }
 
-const StatusIndicator = ({ status, lastUpdated }: { status: string; lastUpdated: string }) => {
-  return (
-    <div className="flex items-center gap-3 text-sm font-medium">
-      <div className={cn(
-        "flex items-center gap-1.5 px-3 py-1 rounded-full transition-colors",
-        status === 'connected' ? "bg-emerald-100 text-emerald-700 border border-emerald-200" :
-        status === 'reconnecting' ? "bg-amber-100 text-amber-700 border border-amber-200" :
-        "bg-rose-100 text-rose-700 border border-rose-200"
-      )}>
-        {status === 'connected' ? <Wifi size={14} /> : status === 'reconnecting' ? <RefreshCw size={14} className="animate-spin" /> : <WifiOff size={14} />}
-        <span>
-          {status === 'connected' ? 'ออนไลน์' : status === 'reconnecting' ? 'กำลังเชื่อมต่อ...' : 'ขาดการเชื่อมต่อ'}
-        </span>
-      </div>
-      <div className="text-slate-500 hidden sm:block">
-        อัปเดตล่าสุด: {lastUpdated ? new Date(lastUpdated).toLocaleTimeString('th-TH') : '-'}
-      </div>
-    </div>
-  );
-};
-
-const PartyListTab = ({ data }: { data: PartyListResult[] }) => {
-  const sortedData = useMemo(() => [...data].sort((a, b) => b.voteCount - a.voteCount), [data]);
-
-  return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="grid gap-4">
-        {sortedData.map((party, index) => (
-          <div key={party.partyId} className="group relative bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-            <div className="p-4 relative z-10 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-4 min-w-[200px]">
-                <div 
-                  className="w-12 h-12 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-sm"
-                  style={{ backgroundColor: party.partyColor }}
-                >
-                  {index + 1}
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-800 text-lg leading-tight">{party.partyNameTh || party.partyName}</h3>
-                  <p className="text-sm text-slate-500">พรรคการเมือง</p>
-                </div>
-              </div>
-              
-              <div className="flex flex-col items-end gap-1">
-                <span className="text-2xl font-black text-slate-900 tracking-tight">{formatNumber(party.voteCount)}</span>
-                <span className="text-sm font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                  {party.percentage.toFixed(2)}%
-                </span>
-              </div>
-            </div>
-            
-            <div 
-              className="absolute left-0 top-0 bottom-0 bg-opacity-10 transition-all duration-1000 ease-out"
-              style={{ 
-                width: `${party.percentage}%`, 
-                backgroundColor: party.partyColor,
-                opacity: 0.1
-              }} 
-            />
-            <div 
-              className="absolute left-0 bottom-0 h-1 transition-all duration-1000 ease-out"
-              style={{ 
-                width: `${party.percentage}%`, 
-                backgroundColor: party.partyColor
-              }} 
-            />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-const ConstituencyTab = ({
-  data,
-}: {
-  data: Array<{
-    districtId: number;
-    districtName: string;
-    results: Array<{
-      candidateId: number;
-      candidateName: string;
-      partyName: string;
-      voteCount: number;
-    }>;
+interface AggregatedStats {
+  totalVotes: number;
+  totalEligible: number;
+  turnoutPercentage: number;
+  provincesReported: number;
+  totalProvinces: number;
+  leadingParty: {
+    name: string;
+    color: string;
+    seats: number;
+  } | null;
+  partySeats: Array<{
+    name: string;
+    color: string;
+    seats: number;
+    votes: number;
   }>;
-}) => {
-  const [selectedDistrictId, setSelectedDistrictId] = useState<number>(data[0]?.districtId || 0);
-
-  const selectedDistrict = useMemo(() => 
-    data.find(d => d.districtId === Number(selectedDistrictId)), 
-    [data, selectedDistrictId]
-  );
-
-  const sortedCandidates = useMemo(() => {
-    if (!selectedDistrict) return [];
-    return [...selectedDistrict.results].sort((a, b) => b.voteCount - a.voteCount);
-  }, [selectedDistrict]);
-
-  const winnerId = sortedCandidates[0]?.candidateId;
-
-  return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-        <label htmlFor="district-select" className="block text-sm font-semibold text-slate-700 mb-2">เลือกเขตเลือกตั้ง</label>
-        <select 
-          id="district-select"
-          value={selectedDistrictId}
-          onChange={(e) => setSelectedDistrictId(Number(e.target.value))}
-          className="w-full p-3 rounded-lg border border-slate-300 bg-white text-slate-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow outline-none"
-        >
-          {data.map(district => (
-            <option key={district.districtId} value={district.districtId}>
-              {district.districtName}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="grid gap-3">
-        {sortedCandidates.map((candidate, index) => {
-          const isWinner = candidate.candidateId === winnerId;
-          const maxVotes = sortedCandidates[0]?.voteCount || 1;
-          const percentage = (candidate.voteCount / (selectedDistrict?.results.reduce((acc, c) => acc + c.voteCount, 0) || 1)) * 100;
-
-          return (
-            <div 
-              key={candidate.candidateId} 
-              className={cn(
-                "relative bg-white border rounded-xl overflow-hidden transition-all p-4",
-                isWinner ? "border-emerald-500 ring-1 ring-emerald-500 shadow-md" : "border-slate-200 hover:border-slate-300"
-              )}
-            >
-              <div className="flex items-center justify-between relative z-10">
-                <div className="flex items-center gap-4">
-                  <div className={cn(
-                    "w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold",
-                    isWinner ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
-                  )}>
-                    {index + 1}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-bold text-slate-900">{candidate.candidateName}</h4>
-                      {isWinner && <Check size={16} className="text-emerald-500" strokeWidth={3} />}
-                    </div>
-                    <p className="text-sm text-slate-500">{candidate.partyName}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="font-black text-slate-900 text-lg">{formatNumber(candidate.voteCount)}</div>
-                  <div className="text-xs text-slate-500">{percentage.toFixed(1)}%</div>
-                </div>
-              </div>
-              
-              <div className="absolute left-0 bottom-0 h-1 bg-slate-100 w-full">
-                <div 
-                  className={cn("h-full transition-all duration-500", isWinner ? "bg-emerald-500" : "bg-slate-400")}
-                  style={{ width: `${percentage}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
-
-const ReferendumTab = ({ data }: { data: ReferendumResult[] }) => {
-  return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      {data.map((q) => {
-        const total = q.approveCount + q.disapproveCount + q.abstainCount;
-        const pApprove = total ? (q.approveCount / total) * 100 : 0;
-        const pDisapprove = total ? (q.disapproveCount / total) * 100 : 0;
-        const pAbstain = total ? (q.abstainCount / total) * 100 : 0;
-
-        return (
-          <div key={q.questionId} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-            <h3 className="font-bold text-xl text-slate-900 mb-6 leading-relaxed">{q.questionText}</h3>
-            
-            <div className="h-16 w-full flex rounded-xl overflow-hidden mb-6 text-white font-bold text-sm shadow-inner bg-slate-100">
-              <div 
-                className="bg-emerald-500 flex items-center justify-center transition-all duration-700 relative group" 
-                style={{ width: `${pApprove}%` }}
-              >
-                {pApprove > 5 && <span className="absolute">เห็นชอบ</span>}
-              </div>
-              <div 
-                className="bg-rose-500 flex items-center justify-center transition-all duration-700 relative group" 
-                style={{ width: `${pDisapprove}%` }}
-              >
-                {pDisapprove > 5 && <span className="absolute">ไม่เห็นชอบ</span>}
-              </div>
-              <div 
-                className="bg-slate-400 flex items-center justify-center transition-all duration-700 relative group" 
-                style={{ width: `${pAbstain}%` }}
-              >
-                {pAbstain > 5 && <span className="absolute text-slate-100">งด</span>}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-4 text-center">
-              <div className="space-y-1">
-                <div className="text-xs font-semibold uppercase tracking-wider text-emerald-600">เห็นชอบ</div>
-                <div className="text-2xl font-black text-slate-900">{pApprove.toFixed(1)}%</div>
-                <div className="text-sm text-slate-500">{formatNumber(q.approveCount)} คะแนน</div>
-              </div>
-              <div className="space-y-1 border-l border-r border-slate-100">
-                <div className="text-xs font-semibold uppercase tracking-wider text-rose-600">ไม่เห็นชอบ</div>
-                <div className="text-2xl font-black text-slate-900">{pDisapprove.toFixed(1)}%</div>
-                <div className="text-sm text-slate-500">{formatNumber(q.disapproveCount)} คะแนน</div>
-              </div>
-              <div className="space-y-1">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">งดออกเสียง</div>
-                <div className="text-2xl font-black text-slate-900">{pAbstain.toFixed(1)}%</div>
-                <div className="text-sm text-slate-500">{formatNumber(q.abstainCount)} คะแนน</div>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-};
+}
 
 function ResultsPageContent() {
   const searchParams = useSearchParams();
-  const electionId = searchParams.get('electionId') || 'demo-election-2027';
+  const electionId = searchParams.get('electionId') || 'demo-election-2569';
 
-  const { data: sseData, status } = useSSE<SSESnapshotData>(`/stream/elections/${electionId}/results`);
-  const [initialData, setInitialData] = useState<DisplayData | null>(null);
-  const [activeTab, setActiveTab] = useState<'party' | 'referendum'>('party');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<APIResponse['data'] | null>(null);
+  const [selectedRegion, setSelectedRegion] = useState<string>(RegionFilter.ALL);
+  const [selectedProvince, setSelectedProvince] = useState<ProvinceData | null>(null);
 
   useEffect(() => {
-    apiRequest<{ success: boolean; data: RestResultsData }>(`/results/${electionId}`)
-      .then((response) => {
-        if (response.success && response.data) {
-          const normalized: DisplayData = {
-            partyListResults: response.data.partyListResults,
-            referendumResults: response.data.referendumResults,
-            totalVotes: response.data.totalVotesCast,
-            turnoutPercentage: response.data.turnoutPercentage,
-            lastUpdated: response.data.lastUpdated,
-          };
-          setInitialData(normalized);
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const response = await apiRequest<APIResponse>(`/results/${electionId}/by-province`);
+        if (response.success) {
+          setData(response.data);
+        } else {
+          setError('Failed to load election data');
         }
+      } catch (err) {
+        console.error('Error fetching data:', err);
+        setError('An error occurred while loading data');
+      } finally {
         setLoading(false);
-      })
-      .catch((err) => {
-        console.error('Failed to fetch initial data', err);
-        setLoading(false);
-      });
+      }
+    };
+
+    fetchData();
   }, [electionId]);
 
-  const sseNormalized = normalizeSseData(sseData);
-  const displayData: DisplayData | null = sseNormalized || initialData;
-  const referendumData = initialData?.referendumResults || displayData?.referendumResults || [];
+  const stats = useMemo<AggregatedStats | null>(() => {
+    if (!data || !data.provinces) return null;
+
+    let totalVotes = 0;
+    let totalEligible = 0;
+    const partyMap = new Map<string, { name: string; color: string; seats: number; votes: number }>();
+
+    data.provinces.forEach(p => {
+      totalVotes += p.totalVotes;
+      totalEligible += p.totalEligibleVoters;
+
+      p.partyResults.forEach(pr => {
+        const existing = partyMap.get(pr.partyId) || {
+          name: pr.partyNameTh,
+          color: pr.partyColor,
+          seats: 0,
+          votes: 0
+        };
+        existing.seats += pr.seatsWon;
+        existing.votes += pr.voteCount;
+        partyMap.set(pr.partyId, existing);
+      });
+    });
+
+    const partySeats = Array.from(partyMap.values())
+      .sort((a, b) => b.seats - a.seats);
+
+    return {
+      totalVotes,
+      totalEligible,
+      turnoutPercentage: totalEligible > 0 ? (totalVotes / totalEligible) * 100 : 0,
+      provincesReported: data.provinces.length,
+      totalProvinces: 77,
+      leadingParty: partySeats.length > 0 ? partySeats[0] : null,
+      partySeats: partySeats.slice(0, 10)
+    };
+  }, [data]);
+
+  const handleSelectRegion = (region: string) => {
+    setSelectedRegion(region);
+    if (region === RegionFilter.ALL) {
+      setSelectedProvince(null);
+    }
+  };
+
+  const handleSelectProvince = (province: ProvinceData | null) => {
+    setSelectedProvince(province);
+  };
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="animate-spin w-8 h-8 text-blue-600" />
-          <p className="font-medium animate-pulse">กำลังโหลดข้อมูลการเลือกตั้ง...</p>
+          <p className="font-medium animate-pulse">กำลังโหลดข้อมูล...</p>
         </div>
       </div>
     );
   }
 
-  if (!displayData) {
+  if (error || !data) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-center space-y-4">
-          <AlertCircle className="w-12 h-12 text-rose-500 mx-auto" />
-          <h2 className="text-xl font-bold text-slate-900">ไม่พบข้อมูลการเลือกตั้ง</h2>
-          <p className="text-slate-500">กรุณาลองใหม่อีกครั้งในภายหลัง</p>
+          <p className="text-xl font-bold text-slate-900">{error || 'ไม่พบข้อมูล'}</p>
+          <button 
+            type="button"
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            ลองใหม่
+          </button>
         </div>
       </div>
     );
@@ -381,7 +157,7 @@ function ResultsPageContent() {
   return (
     <main className="min-h-screen bg-slate-50 font-sans text-slate-900 pb-20">
       <header className="bg-slate-900 text-white shadow-lg sticky top-0 z-50">
-        <div className="h-2 w-full flex">
+        <div className="h-1.5 w-full flex">
           <div className="h-full w-full bg-[#EF3340]"></div>
           <div className="h-full w-full bg-white"></div>
           <div className="h-full w-[200%] bg-[#00247D]"></div>
@@ -389,83 +165,181 @@ function ResultsPageContent() {
           <div className="h-full w-full bg-[#EF3340]"></div>
         </div>
         
-        <div className="container mx-auto px-4 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800">
+        <div className="container mx-auto px-4 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl md:text-3xl font-black tracking-tight leading-none bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
-              ผลการเลือกตั้ง 2569
+            <h1 className="text-2xl font-black bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
+              {data.electionName}
             </h1>
-            <p className="text-slate-400 text-sm mt-1 font-medium">อย่างไม่เป็นทางการ</p>
+            <p className="text-slate-400 text-sm mt-1">
+              อัปเดตล่าสุด: {new Date(data.lastUpdated).toLocaleTimeString('th-TH')}
+            </p>
           </div>
-          <StatusIndicator status={status} lastUpdated={displayData.lastUpdated} />
         </div>
       </header>
 
-      <div className="sticky top-[88px] md:top-[84px] z-40 bg-white/80 backdrop-blur-md border-b border-slate-200">
-        <div className="container mx-auto px-4">
-          <div className="flex gap-6 overflow-x-auto pb-px hide-scrollbar">
-            {([
-              { id: 'party', label: 'บัญชีรายชื่อ' },
-              { id: 'referendum', label: 'ประชามติ' },
-            ] as const).map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "py-4 text-sm md:text-base font-bold border-b-2 transition-all whitespace-nowrap px-2",
-                  activeTab === tab.id 
-                    ? "border-blue-600 text-blue-700" 
-                    : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
+      <div className="container mx-auto px-4 py-8 space-y-6">
+        {stats && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex items-center gap-4">
+              <div className="p-3 bg-blue-50 text-blue-600 rounded-lg">
+                <Vote size={24} />
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">ผู้มาใช้สิทธิ</p>
+                <p className="text-xl font-bold text-slate-900">{formatNumber(stats.totalVotes)}</p>
+              </div>
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex items-center gap-4">
+              <div className="p-3 bg-green-50 text-green-600 rounded-lg">
+                <PieChart size={24} />
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">ร้อยละการใช้สิทธิ</p>
+                <p className="text-xl font-bold text-slate-900">{formatPercent(stats.turnoutPercentage)}</p>
+              </div>
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex items-center gap-4">
+              <div className="p-3 bg-orange-50 text-orange-600 rounded-lg">
+                <Users size={24} />
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">พรรคนำ</p>
+                <div className="flex items-center gap-2">
+                  <span 
+                    className="w-3 h-3 rounded-full" 
+                    style={{ backgroundColor: stats.leadingParty?.color || '#ccc' }}
+                  />
+                  <p className="text-xl font-bold text-slate-900 truncate max-w-[120px]">
+                    {stats.leadingParty?.name || '-'}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex items-center gap-4">
+              <div className="p-3 bg-purple-50 text-purple-600 rounded-lg">
+                <MapIcon size={24} />
+              </div>
+              <div>
+                <p className="text-sm text-slate-500">จังหวัดรายงานผล</p>
+                <p className="text-xl font-bold text-slate-900">{stats.provincesReported}/{stats.totalProvinces}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-7">
+            <ThailandMap
+              provinceData={data.provinces}
+              selectedRegion={selectedRegion}
+              onSelectRegion={handleSelectRegion}
+              onSelectProvince={handleSelectProvince}
+            />
+          </div>
+
+          <div className="lg:col-span-5 space-y-4">
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 h-[340px]">
+              <h3 className="text-base font-bold text-slate-800 mb-2">สรุปจำนวนที่นั่ง (Top 8)</h3>
+              <ResponsiveContainer width="100%" height="85%">
+                <BarChart
+                  layout="vertical"
+                  data={stats?.partySeats.slice(0, 8) || []}
+                  margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                  <XAxis type="number" hide />
+                  <YAxis 
+                    dataKey="name" 
+                    type="category" 
+                    width={80}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <Tooltip 
+                    cursor={{ fill: 'transparent' }}
+                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                  />
+                  <Bar dataKey="seats" radius={[0, 4, 4, 0]} barSize={18}>
+                    {stats?.partySeats.slice(0, 8).map((entry) => (
+                      <Cell key={`party-${entry.name}`} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {selectedProvince && (
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 animate-in fade-in slide-in-from-right-4 duration-300">
+                <div className="flex items-center justify-between mb-3 pb-3 border-b border-gray-100">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-800">{selectedProvince.provinceNameTh}</h3>
+                    <p className="text-xs text-slate-500">{selectedProvince.regionNameTh} • {selectedProvince.districtCount} เขต</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-slate-500">มาใช้สิทธิ</p>
+                    <p className={`text-base font-bold ${
+                      selectedProvince.turnoutPercentage >= 75 ? 'text-green-600' : 'text-slate-700'
+                    }`}>
+                      {formatPercent(selectedProvince.turnoutPercentage)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {selectedProvince.partyResults
+                    .sort((a, b) => b.seatsWon - a.seatsWon || b.voteCount - a.voteCount)
+                    .slice(0, 4)
+                    .map((party) => (
+                      <div key={party.partyId} className="flex items-center gap-2">
+                        <div className="w-1 h-8 rounded-full" style={{ backgroundColor: party.partyColor }}></div>
+                        <div className="flex-grow min-w-0">
+                          <div className="flex justify-between items-center text-sm">
+                            <span className="font-medium text-slate-800 truncate">{party.partyNameTh}</span>
+                            <span className="font-bold text-slate-900 ml-2">{party.seatsWon} ที่นั่ง</span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-1 rounded-full mt-1 overflow-hidden">
+                            <div 
+                              className="h-full rounded-full" 
+                              style={{ 
+                                width: `${Math.min(party.percentage, 100)}%`,
+                                backgroundColor: party.partyColor 
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {!selectedProvince && (
+               <div className="bg-blue-50 border border-blue-100 rounded-xl p-6 text-center flex flex-col items-center justify-center h-[300px] text-blue-800">
+                 <MapIcon size={40} className="mb-3 text-blue-300" />
+                 <p className="font-medium">คลิกจังหวัดในแผนที่</p>
+                 <p className="text-sm text-blue-600 mt-1">เพื่อดูผลคะแนนรายจังหวัด</p>
+               </div>
+            )}
           </div>
         </div>
       </div>
-
-        <div className="container mx-auto px-4 py-8">
-          <div className="max-w-4xl mx-auto">
-            {activeTab === 'party' && <PartyListTab data={displayData.partyListResults} />}
-            {activeTab === 'referendum' && <ReferendumTab data={referendumData} />}
-          </div>
-        </div>
-
-      <footer className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-50">
-        <div className="container mx-auto px-4 py-3">
-          <div className="flex justify-between items-center text-sm md:text-base">
-            <div className="flex flex-col md:flex-row md:gap-6">
-              <div className="flex items-baseline gap-2">
-                <span className="text-slate-500 font-medium">ผู้มาใช้สิทธิ</span>
-                <span className="font-black text-slate-900 text-lg">{formatNumber(displayData.totalVotes)}</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="text-right">
-                <span className="block text-xs text-slate-500 font-medium uppercase tracking-wider">Voter Turnout</span>
-                <span className="block font-black text-blue-600 text-xl leading-none">{formatPercent(displayData.turnoutPercentage)}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </footer>
     </main>
+  );
+}
+
+function LoadingFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400">
+      <div className="flex flex-col items-center gap-4">
+        <Loader2 className="animate-spin w-8 h-8 text-blue-600" />
+        <p className="font-medium animate-pulse">กำลังโหลดข้อมูล...</p>
+      </div>
+    </div>
   );
 }
 
 export default function ResultsPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400">
-          <div className="flex flex-col items-center gap-4">
-            <Loader2 className="animate-spin w-8 h-8 text-blue-600" />
-            <p className="font-medium animate-pulse">กำลังโหลดข้อมูลการเลือกตั้ง...</p>
-          </div>
-        </div>
-      }
-    >
+    <Suspense fallback={<LoadingFallback />}>
       <ResultsPageContent />
     </Suspense>
   );

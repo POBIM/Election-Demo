@@ -31,7 +31,7 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
     
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `API Error: ${response.status}`);
+      throw new Error(errorData.error || errorData.message || `API Error: ${response.status}`);
     }
 
     if (response.status === 204) {

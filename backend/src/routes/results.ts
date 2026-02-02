@@ -93,6 +93,146 @@ router.get('/:electionId', async (req, res) => {
   });
 });
 
+router.get('/:electionId/by-province', async (req, res) => {
+  const { electionId } = req.params;
+
+  const election = await prisma.election.findUnique({
+    where: { id: electionId },
+  });
+
+  if (!election) {
+    res.status(404).json({ success: false, error: 'Election not found' });
+    return;
+  }
+
+  const provinces = await prisma.province.findMany({
+    include: {
+      region: true,
+      districts: true,
+    },
+    orderBy: { nameTh: 'asc' },
+  });
+
+  const parties = await prisma.party.findMany({
+    where: { electionId },
+    orderBy: { partyNumber: 'asc' },
+  });
+
+  const constituencyVotes = await prisma.vote.groupBy({
+    by: ['candidateId'],
+    where: { 
+      electionId, 
+      ballotType: 'CONSTITUENCY', 
+      candidateId: { not: null } 
+    },
+    _count: { id: true },
+  });
+
+  const candidates = await prisma.candidate.findMany({
+    where: { electionId },
+    include: { 
+      party: true,
+      district: {
+        include: { province: true }
+      }
+    },
+  });
+
+  const candidateVoteMap = new Map<string, number>();
+  constituencyVotes.forEach(v => {
+    if (v.candidateId) {
+      candidateVoteMap.set(v.candidateId, v._count.id);
+    }
+  });
+
+  const provinceResults = provinces.map(province => {
+    const provinceDistricts = province.districts;
+    const districtIds = new Set(provinceDistricts.map(d => d.id));
+
+    const provinceCandidates = candidates.filter(c => 
+      c.district && districtIds.has(c.district.id)
+    );
+
+    const partyVoteCounts = new Map<string, number>();
+    const seatsWonByParty = new Map<string, number>();
+
+    const districtWinners = new Map<string, { partyId: string; votes: number }>();
+    
+    provinceCandidates.forEach(candidate => {
+      const votes = candidateVoteMap.get(candidate.id) || 0;
+      
+      if (candidate.partyId) {
+        partyVoteCounts.set(
+          candidate.partyId, 
+          (partyVoteCounts.get(candidate.partyId) || 0) + votes
+        );
+      }
+
+      const currentWinner = districtWinners.get(candidate.districtId);
+      if (!currentWinner || votes > currentWinner.votes) {
+        districtWinners.set(candidate.districtId, { 
+          partyId: candidate.partyId || '', 
+          votes 
+        });
+      }
+    });
+
+    districtWinners.forEach(winner => {
+      if (winner.partyId && winner.votes > 0) {
+        seatsWonByParty.set(winner.partyId, (seatsWonByParty.get(winner.partyId) || 0) + 1);
+      }
+    });
+
+    const totalVotes = Array.from(partyVoteCounts.values()).reduce((a, b) => a + b, 0);
+
+    const partyResultsArray = parties.map(party => ({
+      partyId: party.id,
+      partyName: party.name,
+      partyNameTh: party.nameTh,
+      partyColor: party.color,
+      voteCount: partyVoteCounts.get(party.id) || 0,
+      percentage: totalVotes > 0 ? ((partyVoteCounts.get(party.id) || 0) / totalVotes) * 100 : 0,
+      seatsWon: seatsWonByParty.get(party.id) || 0,
+    })).filter(p => p.voteCount > 0 || p.seatsWon > 0)
+      .sort((a, b) => b.voteCount - a.voteCount);
+
+    const winningParty = partyResultsArray[0] || null;
+    const totalEligibleVoters = provinceDistricts.reduce((sum, d) => sum + d.voterCount, 0);
+
+    return {
+      provinceId: province.id,
+      provinceName: province.name,
+      provinceNameTh: province.nameTh,
+      regionId: province.regionId,
+      regionName: province.region?.name || '',
+      regionNameTh: province.region?.nameTh || '',
+      districtCount: provinceDistricts.length,
+      totalEligibleVoters,
+      totalVotes,
+      turnoutPercentage: totalEligibleVoters > 0 ? (totalVotes / totalEligibleVoters) * 100 : 0,
+      partyResults: partyResultsArray,
+      winningParty: winningParty ? {
+        partyId: winningParty.partyId,
+        partyName: winningParty.partyName,
+        partyNameTh: winningParty.partyNameTh,
+        partyColor: winningParty.partyColor,
+        voteCount: winningParty.voteCount,
+        percentage: winningParty.percentage,
+      } : null,
+    };
+  });
+
+  res.json({
+    success: true,
+    data: {
+      electionId: election.id,
+      electionName: election.nameTh,
+      lastUpdated: new Date().toISOString(),
+      provinces: provinceResults,
+    },
+  });
+});
+
 router.get('/:electionId/by-district', async (req, res) => {
   const { provinceId } = req.query;
 
